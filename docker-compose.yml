@@ -1,0 +1,81 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: guestpass-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - guestpass-network
+
+  flyway:
+    image: flyway/flyway:11-alpine
+    container_name: guestpass-flyway
+    command: migrate
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+    volumes:
+      - ./database/flyway.conf:/flyway/conf/flyway.conf
+      - ./database/migrations:/flyway/sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - guestpass-network
+
+  bot:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: guestpass-bot
+    restart: unless-stopped
+    environment:
+      # Database
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      # Discord
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
+      # PPOA
+      PPOA_REGISTRATION_CODE: ${PPOA_REGISTRATION_CODE}
+      DEFAULT_APARTMENT: ${DEFAULT_APARTMENT}
+      # Notifications
+      NOTIFICATION_HOURS_BEFORE_EXPIRY: ${NOTIFICATION_HOURS_BEFORE_EXPIRY}
+      AUTO_REREGISTER_HOURS_BEFORE_EXPIRY: ${AUTO_REREGISTER_HOURS_BEFORE_EXPIRY}
+      # Environment
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      flyway:
+        condition: service_completed_successfully
+    networks:
+      - guestpass-network
+    volumes:
+      - ./guestpass_bot.log:/app/guestpass_bot.log
+
+networks:
+  guestpass-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
