@@ -37,4 +37,7 @@ rebuild: ## Rebuild and restart bot
 
 
 db-shell: ## Access PostgreSQL shell
-	docker-compose exec postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB}
+	docker-compose exec postgres psql -U ${DATABASE__USER} -d ${DATABASE__DATABASE}
+
+codegen: ## Launch Playwright codegen for PPOA
+	uv run playwright codegen https://www.parkingpermitsofamerica.com/PermitRegistration.aspx

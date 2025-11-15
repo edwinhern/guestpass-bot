@@ -3,16 +3,13 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
+from src.models.base import get_db_session
 from src.models.registration import Registration
 from src.repositories.registration_repository import RegistrationRepository
 
 
 class RegistrationService:
     """Business logic for managing registrations."""
-
-    def __init__(self) -> None:
-        """Initialize service with repository."""
-        self.repository = RegistrationRepository()
 
     def create_registration(
         self,
@@ -27,8 +24,8 @@ class RegistrationService:
         car_color: str,
         resident_visiting: str,
         apartment_visiting: str,
+        email: str,
         phone_number: Optional[str] = None,
-        email: Optional[str] = None,
     ) -> Registration:
         """
         Create a new registration.
@@ -45,29 +42,38 @@ class RegistrationService:
         license_plate = license_plate.strip().upper()
         license_plate_state = license_plate_state.strip().upper()
 
-        return self.repository.create(
-            discord_user_id=discord_user_id,
-            first_name=first_name,
-            last_name=last_name,
-            license_plate=license_plate,
-            license_plate_state=license_plate_state,
-            car_year=car_year,
-            car_make=car_make,
-            car_model=car_model,
-            car_color=car_color,
-            resident_visiting=resident_visiting,
-            apartment_visiting=apartment_visiting,
-            phone_number=phone_number,
-            email=email,
-        )
+        # Create Registration ORM object
+        registration = Registration()
+        registration.discord_user_id = discord_user_id
+        registration.first_name = first_name
+        registration.last_name = last_name
+        registration.license_plate = license_plate
+        registration.license_plate_state = license_plate_state
+        registration.car_year = car_year
+        registration.car_make = car_make
+        registration.car_model = car_model
+        registration.car_color = car_color
+        registration.resident_visiting = resident_visiting
+        registration.apartment_visiting = apartment_visiting
+        registration.phone_number = phone_number
+        registration.email = email
+
+        # Use context manager for session lifecycle
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.create(registration)
 
     def get_user_registrations(self, discord_user_id: str) -> list[Registration]:
         """Get all registrations for a user."""
-        return self.repository.get_by_user(discord_user_id)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.get_by_user(discord_user_id)
 
     def get_registration(self, registration_id: int) -> Optional[Registration]:
         """Get a specific registration."""
-        return self.repository.get_by_id(registration_id)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.get_by_id(registration_id)
 
     def search_registrations(
         self,
@@ -84,7 +90,9 @@ class RegistrationService:
         if len(query) < 2:
             raise ValueError("Search query must be at least 2 characters")
 
-        return self.repository.search(query, discord_user_id)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.search(query, discord_user_id)
 
     def record_submission(self, registration_id: int) -> Registration:
         """
@@ -95,42 +103,50 @@ class RegistrationService:
         now = datetime.utcnow()
         expires_at = now + timedelta(hours=24)
 
-        self.repository.update_submission(
-            registration_id=registration_id,
-            last_submitted_at=now,
-            expires_at=expires_at,
-        )
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            repository.update_submission(
+                registration_id=registration_id,
+                last_submitted_at=now,
+                expires_at=expires_at,
+            )
 
-        # Return updated registration
-        registration = self.repository.get_by_id(registration_id)
-        if not registration:
-            raise ValueError(f"Registration {registration_id} not found")
+            # Return updated registration
+            registration = repository.get_by_id(registration_id)
+            if not registration:
+                raise ValueError(f"Registration {registration_id} not found")
 
-        return registration
+            return registration
 
     def toggle_auto_reregister(self, registration_id: int, enabled: bool) -> Registration:
         """Toggle auto re-registration for a registration."""
-        self.repository.update_auto_reregister(registration_id, enabled)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            repository.update_auto_reregister(registration_id, enabled)
 
-        registration = self.repository.get_by_id(registration_id)
-        if not registration:
-            raise ValueError(f"Registration {registration_id} not found")
+            registration = repository.get_by_id(registration_id)
+            if not registration:
+                raise ValueError(f"Registration {registration_id} not found")
 
-        return registration
+            return registration
 
     def set_active_status(self, registration_id: int, is_active: bool) -> Registration:
         """Set active status for a registration."""
-        self.repository.update_active_status(registration_id, is_active)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            repository.update_active_status(registration_id, is_active)
 
-        registration = self.repository.get_by_id(registration_id)
-        if not registration:
-            raise ValueError(f"Registration {registration_id} not found")
+            registration = repository.get_by_id(registration_id)
+            if not registration:
+                raise ValueError(f"Registration {registration_id} not found")
 
-        return registration
+            return registration
 
     def get_expiring_registrations(self, hours_before: int = 2) -> list[Registration]:
         """Get registrations that will expire within specified hours."""
-        return self.repository.get_expiring_soon(hours_before)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.get_expiring_soon(hours_before)
 
     def get_registrations_for_auto_reregister(
         self,
@@ -141,28 +157,36 @@ class RegistrationService:
 
         Returns active registrations with auto-reregister enabled that are expiring soon.
         """
-        active_auto = self.repository.get_active_with_auto_reregister()
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            active_auto = repository.get_active_with_auto_reregister()
 
-        # Filter to only those expiring within threshold
-        now = datetime.utcnow()
-        threshold = now + timedelta(hours=hours_before_expiry)
+            # Filter to only those expiring within threshold
+            now = datetime.utcnow()
+            threshold = now + timedelta(hours=hours_before_expiry)
 
-        return [reg for reg in active_auto if reg.expires_at and reg.expires_at <= threshold]
+            return [reg for reg in active_auto if reg.expires_at and reg.expires_at <= threshold]
 
     def verify_ownership(self, registration_id: int, discord_user_id: str) -> bool:
         """Verify that a user owns a registration."""
-        registration = self.repository.get_by_id(registration_id)
-        if not registration:
-            return False
-        return registration.discord_user_id == discord_user_id
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            registration = repository.get_by_id(registration_id)
+            if not registration:
+                return False
+            return registration.discord_user_id == discord_user_id
 
     def get_statistics(self) -> dict[str, int]:
         """Get registration statistics."""
-        return self.repository.get_stats()
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.get_stats()
 
     def delete_registration(self, registration_id: int) -> bool:
         """Delete a registration."""
-        return self.repository.delete(registration_id)
+        with get_db_session() as session:
+            repository = RegistrationRepository(session)
+            return repository.delete(registration_id)
 
     def format_registration_display(self, registration: Registration) -> str:
         """Format a registration for display in Discord."""

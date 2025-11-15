@@ -1,90 +1,58 @@
-"""Configuration management using environment variables."""
+from functools import lru_cache
 
-import os
-from dataclasses import dataclass
-
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
+from pydantic import BaseModel, Field, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-@dataclass
-class DatabaseConfig:
-    """Database configuration."""
-
-    user: str
-    password: str
-    host: str
-    port: int
-    database: str
+class DatabaseConfig(BaseModel):
+    user: str = Field(..., description="Postgres username")
+    password: str = Field(..., description="Postgres password")
+    host: str = Field(..., description="Postgres host")
+    port: int = Field(..., description="Postgres port")
+    database: str = Field(..., description="Postgres database name")
 
     @property
     def url(self) -> str:
-        """Get the database connection URL."""
         return f"postgresql+psycopg://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 
-@dataclass
-class DiscordConfig:
-    """Discord bot configuration."""
-
-    bot_token: str
-    admin_role_id: str
+class DiscordConfig(BaseModel):
+    bot_token: str = Field(..., description="Discord Bot Token")
+    admin_role_id: str = Field(..., description="Discord Admin Role ID")
 
 
-@dataclass
-class PPOAConfig:
-    """PPOA parking registration configuration."""
-
-    registration_code: str
-    default_apartment: str
+class PPOAConfig(BaseModel):
+    registration_code: str = Field(..., description="PPOA registration code")
+    default_apartment: str = Field(..., description="Default apartment for guests")
 
 
-@dataclass
-class NotificationConfig:
-    """Notification settings."""
-
-    hours_before_expiry: int
-    auto_reregister_hours_before_expiry: int
+class NotificationConfig(BaseModel):
+    hours_before_expiry: int = Field(..., ge=1)
+    auto_reregister_hours_before_expiry: int = Field(..., ge=1)
 
 
-@dataclass
-class Config:
-    """Application configuration."""
+class AppConfig(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_nested_delimiter="__",
+    )
 
     database: DatabaseConfig
     discord: DiscordConfig
     ppoa: PPOAConfig
     notification: NotificationConfig
-    environment: str
 
-    @classmethod
-    def from_env(cls) -> "Config":
-        """Load configuration from environment variables."""
-        return cls(
-            database=DatabaseConfig(
-                user=os.getenv("POSTGRES_USER", "guestpass_user"),
-                password=os.getenv("POSTGRES_PASSWORD", ""),
-                host=os.getenv("POSTGRES_HOST", "localhost"),
-                port=int(os.getenv("POSTGRES_PORT", "5432")),
-                database=os.getenv("POSTGRES_DB", "guestpass_db"),
-            ),
-            discord=DiscordConfig(
-                bot_token=os.getenv("DISCORD_BOT_TOKEN", ""),
-                admin_role_id=os.getenv("ADMIN_ROLE_ID", ""),
-            ),
-            ppoa=PPOAConfig(
-                registration_code=os.getenv("PPOA_REGISTRATION_CODE", "MAVP"),
-                default_apartment=os.getenv("DEFAULT_APARTMENT", "215"),
-            ),
-            notification=NotificationConfig(
-                hours_before_expiry=int(os.getenv("NOTIFICATION_HOURS_BEFORE_EXPIRY", "2")),
-                auto_reregister_hours_before_expiry=int(os.getenv("AUTO_REREGISTER_HOURS_BEFORE_EXPIRY", "2")),
-            ),
-            environment=os.getenv("ENVIRONMENT", "development"),
-        )
+    environment: str = Field(..., description="Environment name")
 
 
-# Global config instance
-config = Config.from_env()
+@lru_cache
+def get_config() -> AppConfig:
+    try:
+        return AppConfig()
+    except ValidationError as err:
+        print("\n CONFIGURATION ERROR — Missing or Invalid Environment Variables\n")
+        print(err)
+        raise SystemExit(1) from err
+
+
+config = get_config()

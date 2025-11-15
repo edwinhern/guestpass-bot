@@ -1,6 +1,4 @@
-"""Data models and database table definitions."""
+from src.models.base import Base, SessionLocal, engine, get_db_session
+from src.models.registration import Registration
 
-from src.models.base import engine, metadata
-from src.models.registration import Registration, registrations_table
-
-__all__ = ["Registration", "engine", "metadata", "registrations_table"]
+__all__ = ["Base", "Registration", "SessionLocal", "engine", "get_db_session"]

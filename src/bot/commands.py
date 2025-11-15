@@ -1,13 +1,12 @@
 """Discord slash commands for parking registration."""
 
 import logging
-from typing import Optional
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-from src.bot.modals import RegistrationModal, VehicleDetailsModal, VisitInfoModal
+from src.bot.modals import RegistrationModal
 from src.integrations.parking_registration_integration import ParkingRegistrationIntegration
 from src.services.registration_service import RegistrationService
 
@@ -26,58 +25,9 @@ class RegistrationCommands(commands.Cog):
     @app_commands.command(name="register", description="Register a new guest parking pass")
     async def register(self, interaction: discord.Interaction) -> None:
         """Start the registration process with a multi-step modal."""
-        # Create a view to handle the multi-step registration
-        view = RegistrationView(
-            self.service,
-            self.integration,
-            str(interaction.user.id),
-        )
-
-        # Send the first modal
-        modal = RegistrationModal()
+        # Send the first modal directly
+        modal = RegistrationModal(self.service, self.integration, str(interaction.user.id))
         await interaction.response.send_modal(modal)
-
-        # Wait for modal submission
-        await modal.wait()
-
-        # Store first modal data
-        view.registration_data.update({
-            "first_name": modal.first_name.value,
-            "last_name": modal.last_name.value,
-            "license_plate": modal.license_plate.value,
-            "license_plate_state": modal.license_plate_state.value,
-            "phone_number": modal.phone_number.value or None,
-        })
-
-        # Send second modal
-        vehicle_modal = VehicleDetailsModal()
-        await interaction.followup.send("Please provide vehicle details:", ephemeral=True)
-        await interaction.followup.send_modal(vehicle_modal)
-        await vehicle_modal.wait()
-
-        # Store second modal data
-        view.registration_data.update({
-            "car_year": vehicle_modal.car_year.value,
-            "car_make": vehicle_modal.car_make.value,
-            "car_model": vehicle_modal.car_model.value,
-            "car_color": vehicle_modal.car_color.value,
-            "email": vehicle_modal.email.value or None,
-        })
-
-        # Send third modal
-        visit_modal = VisitInfoModal()
-        await interaction.followup.send("Please provide visit information:", ephemeral=True)
-        await interaction.followup.send_modal(visit_modal)
-        await visit_modal.wait()
-
-        # Store third modal data
-        view.registration_data.update({
-            "resident_visiting": visit_modal.resident_visiting.value,
-            "apartment_visiting": visit_modal.apartment_visiting.value,
-        })
-
-        # Create registration and submit
-        await view.complete_registration(interaction)
 
     @app_commands.command(name="myregistrations", description="View all your saved registrations")
     async def my_registrations(self, interaction: discord.Interaction) -> None:
@@ -168,7 +118,7 @@ class RegistrationCommands(commands.Cog):
             # Submit to PPOA
             await interaction.followup.send("Submitting registration to PPOA...", ephemeral=True)
 
-            success, message = self.integration.submit_registration(registration)
+            success, message = await self.integration.submit_registration(registration)
 
             if success:
                 # Update submission tracking
@@ -265,69 +215,6 @@ class RegistrationCommands(commands.Cog):
 
         except Exception as e:
             logger.exception("Error toggling auto-reregister")
-            await interaction.followup.send(f"Error: {e!s}", ephemeral=True)
-
-
-class RegistrationView:
-    """Helper class to manage multi-step registration process."""
-
-    def __init__(
-        self,
-        service: RegistrationService,
-        integration: ParkingRegistrationIntegration,
-        discord_user_id: str,
-    ) -> None:
-        """Initialize registration view."""
-        self.service = service
-        self.integration = integration
-        self.discord_user_id = discord_user_id
-        self.registration_data: dict[str, Optional[str]] = {}
-
-    async def complete_registration(self, interaction: discord.Interaction) -> None:
-        """Complete the registration process."""
-        try:
-            # Create registration in database
-            registration = self.service.create_registration(
-                discord_user_id=self.discord_user_id,
-                **self.registration_data,  # type: ignore[arg-type]
-            )
-
-            # Submit to PPOA
-            await interaction.followup.send("Submitting registration to PPOA...", ephemeral=True)
-
-            success, message = self.integration.submit_registration(registration)
-
-            if success:
-                # Update submission tracking
-                updated_reg = self.service.record_submission(registration.id)  # type: ignore[assignment]
-
-                embed = discord.Embed(
-                    title="✅ Registration Created and Submitted",
-                    color=discord.Color.green(),
-                    description=f"Registration #{updated_reg.id} created and submitted successfully!",
-                )
-                embed.add_field(name="Guest", value=f"{updated_reg.first_name} {updated_reg.last_name}")
-                embed.add_field(
-                    name="Vehicle",
-                    value=f"{updated_reg.car_year} {updated_reg.car_make} {updated_reg.car_model}",
-                )
-                embed.add_field(name="Plate", value=f"{updated_reg.license_plate} ({updated_reg.license_plate_state})")
-                embed.add_field(
-                    name="Expires At",
-                    value=updated_reg.expires_at.strftime("%Y-%m-%d %H:%M UTC") if updated_reg.expires_at else "N/A",
-                )
-
-                await interaction.followup.send(embed=embed, ephemeral=True)
-            else:
-                # Registration saved but submission failed
-                await interaction.followup.send(
-                    f"⚠️ Registration #{registration.id} saved but submission failed: {message}\n"
-                    f"You can try resubmitting with `/resubmit {registration.id}`",
-                    ephemeral=True,
-                )
-
-        except Exception as e:
-            logger.exception("Error completing registration")
             await interaction.followup.send(f"Error: {e!s}", ephemeral=True)
 
 

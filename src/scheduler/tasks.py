@@ -92,7 +92,7 @@ class SchedulerTasks:
                     logger.info(f"Auto re-registering registration {registration.id}")
 
                     # Submit to PPOA
-                    success, message = self.integration.submit_registration(registration)
+                    success, message = await self.integration.submit_registration(registration)
 
                     if success:
                         # Update submission tracking

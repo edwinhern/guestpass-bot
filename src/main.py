@@ -24,10 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class GuestPassBot(commands.Bot):
-    """Guest Pass Discord Bot."""
-
     def __init__(self) -> None:
-        """Initialize bot with intents and configuration."""
         intents = discord.Intents.default()
         intents.message_content = True
         intents.members = True

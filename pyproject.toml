@@ -11,6 +11,8 @@ dependencies = [
     "psycopg[binary]>=3.2.3",
     "apscheduler>=3.10.4",
     "python-dotenv>=1.0.1",
+    "pydantic>=2.12.4",
+    "pydantic-settings>=2.12.0",
 ]
 
 [dependency-groups]
@@ -22,6 +24,7 @@ dev = [
 ]
 
 [tool.mypy]
+plugins = ['pydantic.mypy']
 files = ["src"]
 mypy_path = ["src"]
 explicit_package_bases = true
