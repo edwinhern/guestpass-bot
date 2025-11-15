@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, Integer, String
@@ -46,10 +46,13 @@ class Registration(Base):
         if self.expires_at is None:
             return True
 
+        # Make expires_at timezone-aware if it's naive
         expires_aware = (
-            self.expires_at.replace(tzinfo=datetime.utcnow) if self.expires_at.tzinfo is None else self.expires_at
+            self.expires_at.replace(tzinfo=timezone.utc) if self.expires_at.tzinfo is None else self.expires_at
         )
-        return datetime.utcnow >= expires_aware
+        # Compare with timezone-aware current time
+        now_aware = datetime.now(timezone.utc)
+        return now_aware >= expires_aware
 
     @property
     def is_expiring_soon(self) -> bool:
@@ -58,5 +61,12 @@ class Registration(Base):
 
         if self.expires_at is None:
             return False
-        hours_until_expiry = (self.expires_at - datetime.utcnow).total_seconds() / 3600
+
+        # Make expires_at timezone-aware if it's naive
+        expires_aware = (
+            self.expires_at.replace(tzinfo=timezone.utc) if self.expires_at.tzinfo is None else self.expires_at
+        )
+        # Compare with timezone-aware current time
+        now_aware = datetime.now(timezone.utc)
+        hours_until_expiry = (expires_aware - now_aware).total_seconds() / 3600
         return 0 < hours_until_expiry <= config.notification.hours_before_expiry

@@ -9,6 +9,61 @@ from src.models.registration import Registration
 
 logger = logging.getLogger(__name__)
 
+# State code to full state name mapping for PPOA form
+STATE_CODE_TO_NAME = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+    "DC": "District of Columbia",
+}
+
 
 class ParkingRegistrationIntegration:
     """Handles automated submission of parking registration to PPOA."""
@@ -17,15 +72,6 @@ class ParkingRegistrationIntegration:
     TIMEOUT = 30000  # 30 seconds
 
     async def submit_registration(self, registration: Registration) -> tuple[bool, str]:
-        """
-        Submit a registration to PPOA using Playwright automation.
-
-        Args:
-            registration: Registration object with all required fields
-
-        Returns:
-            Tuple of (success: bool, message: str)
-        """
         try:
             async with async_playwright() as p:
                 # Launch browser (headless in production)
@@ -77,17 +123,55 @@ class ParkingRegistrationIntegration:
         """Enter the registration code and verify."""
         try:
             # Wait for and fill registration code input
+            logger.info("Waiting for registration code input field...")
             code_input = page.get_by_role("textbox", name="Registration Code*")
             await code_input.wait_for(timeout=self.TIMEOUT)
-            await code_input.fill(config.ppoa.registration_code)
+
+            # Click on the input first to focus it
+            await code_input.click()
+            await page.wait_for_timeout(300)
+
+            # Use press_sequentially which better simulates real typing
+            logger.info(f"Typing registration code: {config.ppoa.registration_code}")
+            await code_input.press_sequentially(config.ppoa.registration_code, delay=150)
+
+            # Trigger blur event to ensure validation runs
+            await code_input.evaluate("el => el.dispatchEvent(new Event('blur', { bubbles: true }))")
+            await page.wait_for_timeout(500)  # Brief pause after typing
 
             # Click verify button
+            logger.info("Clicking verify button...")
             verify_button = page.get_by_role("button", name=" Verify Code")
             await verify_button.click()
 
+            # Give the page time to process the verification
+            logger.info("Waiting for page response after clicking verify...")
+            await page.wait_for_timeout(3000)  # Wait 3 seconds for the page to respond
+
+            # Check if there's an error message on the page
+            try:
+                error_alert = page.locator('div[role="alert"]')
+                if await error_alert.is_visible(timeout=1000):
+                    error_text = await error_alert.text_content()
+                    logger.error(f"Verification error detected: {error_text}")
+                    return False, f"Verification failed: {error_text}"
+            except Exception:
+                # No error message found, continue with normal flow
+                logger.debug("No error alert found, proceeding")
+
             # Wait for permit types to load (verify the Select button appears)
+            logger.info("Looking for Select button...")
             select_button = page.get_by_role("button", name=" Select")
-            await select_button.wait_for(timeout=self.TIMEOUT)
+
+            try:
+                await select_button.wait_for(timeout=10000, state="visible")  # 10 second timeout
+                logger.info("Select button found - permit types loaded")
+            except Exception:
+                # Log debugging information if verification fails
+                logger.exception("Failed to find Select button after code verification")
+                page_content = await page.content()
+                logger.debug(f"Page content after verification (first 500 chars): {page_content[:500]}")
+                raise
 
             return True, "Code verified"
 
@@ -101,6 +185,9 @@ class ParkingRegistrationIntegration:
             # Click the Select button (assumes 24Hr Registered Visitor is the available option)
             select_button = page.get_by_role("button", name=" Select")
             await select_button.click()
+
+            # Give the page time to load the form
+            await page.wait_for_timeout(1000)  # Wait 1 second for form to load
 
             # Wait for form to load (check for license plate field)
             license_plate_input = page.locator('input[name="PermitDetails.LicensePlateNumber"]')
@@ -117,9 +204,13 @@ class ParkingRegistrationIntegration:
         try:
             # Vehicle Information - using exact name attributes from codegen
             await page.locator('input[name="PermitDetails.LicensePlateNumber"]').fill(registration.license_plate)
-            await page.locator('select[name="PermitDetails.LicensePlateState"]').select_option(
-                registration.license_plate_state
-            )
+
+            # Convert 2-letter state code to full state name
+            state_code = registration.license_plate_state.upper()
+            state_name = STATE_CODE_TO_NAME.get(state_code, state_code)
+            logger.debug(f"Converting state code '{state_code}' to '{state_name}'")
+
+            await page.locator('select[name="PermitDetails.LicensePlateState"]').select_option(state_name)
 
             # Vehicle details
             await page.locator('input[name="PermitDetails.VehicleYear"]').fill(registration.car_year)
@@ -157,32 +248,36 @@ class ParkingRegistrationIntegration:
             proceed_button = page.get_by_role("button", name=" Proceed to Confirmation")
             await proceed_button.click()
 
+            # Give the page time to navigate to confirmation page
+            await page.wait_for_timeout(2000)  # Wait 2 seconds for page transition
+
             # Wait for confirmation page to load
             confirmation_checkbox = page.get_by_role("checkbox", name=" I confirm that I have")
             await confirmation_checkbox.wait_for(timeout=self.TIMEOUT)
 
             # Check the confirmation checkbox
             await confirmation_checkbox.check()
+            logger.info("Confirmation checkbox checked")
 
+            # TODO: TESTING MODE - Final submission is currently disabled
+            # Uncomment the section below when ready to enable actual PPOA submissions
+            """
             # Click the final submit button
-            # submit_button = page.get_by_role("button", name=" Confirm and Submit Permit")
-            # await submit_button.click()
+            submit_button = page.get_by_role("button", name=" Confirm and Submit Permit")
+            await submit_button.click()
 
-            # # Wait for success indicators (permit number or confirmation message)
-            # # Give it a moment to process
-            # await page.wait_for_timeout(3000)
+            # Wait for submission to complete
+            await page.wait_for_timeout(3000)
 
-            # # Check if we're on a success/confirmation page by looking for common success indicators
-            # # The generated code showed permit numbers and dates appearing after submission
-            # try:
-            #     # Look for any text that indicates success (permit number pattern)
-            #     await page.wait_for_selector("text=/\\d{7}/", timeout=5000)  # 7-digit permit number
-            #     logger.info("Permit submission confirmed - permit number detected")
-            # except Exception:
-            #     # If we can't find a permit number, that's okay - we'll assume success if no error
-            #     logger.warning("Could not verify permit number, but no errors detected")
+            # Verify success by looking for permit number (7-digit pattern)
+            try:
+                await page.wait_for_selector("text=/\\d{7}/", timeout=5000)
+                logger.info("Permit submission confirmed - permit number detected")
+            except Exception:
+                logger.warning("Could not verify permit number, but no errors detected")
+            """
 
-            return True, "Form submitted successfully"
+            return True, "Form filled and ready for submission (testing mode - not submitted)"
 
         except Exception as e:
             logger.exception("Error submitting form")
